@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>我的双币资产 (Bug修复版)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .slide-up-enter-active, .slide-up-leave-active { transition: transform 0.3s ease, opacity 0.3s ease; }
+        .slide-up-enter-from, .slide-up-leave-to { transform: translateY(100%); opacity: 0; }
+    </style>
+</head>
+<body class="text-slate-800 pb-24">
+
+<div id="app" class="max-w-md mx-auto bg-gray-50 min-h-screen relative shadow-2xl overflow-hidden">
+
+    <header class="bg-slate-900 text-white pt-8 pb-16 px-6 rounded-b-[2.5rem] relative z-10">
+        <div class="flex justify-between items-center mb-6">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold">M</div>
+                <span class="font-semibold tracking-wide text-slate-300">MyWealth</span>
+            </div>
+            <button @click="showRateModal = true" class="text-xs bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-full hover:bg-slate-700 transition">
+                汇率: {{ exchangeRate }}
+            </button>
+        </div>
+
+        <div class="text-center">
+            <p class="text-slate-400 text-sm font-medium mb-1">净资产 (Net Worth)</p>
+            <div class="flex items-baseline justify-center gap-2" @click="toggleBaseCurrency">
+                <span class="text-2xl text-slate-500">{{ baseCurrency === 'AUD' ? '$' : '¥' }}</span>
+                <h1 class="text-5xl font-bold tracking-tight">{{ formatNumber(netWorth) }}</h1>
+            </div>
+            <p class="text-xs text-slate-500 mt-2">包含负债的最终身价 (点击金额切换币种)</p>
+        </div>
+
+        <div class="absolute -bottom-10 left-6 right-6 bg-white p-4 rounded-2xl shadow-lg flex justify-between border border-slate-100">
+            <div class="text-center w-1/2 border-r border-slate-100">
+                <p class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">总资产 Assets</p>
+                <p class="text-emerald-600 font-bold text-lg">+{{ formatSimple(totalAssets) }}</p>
+            </div>
+            <div class="text-center w-1/2">
+                <p class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">总负债 Liabilities</p>
+                <p class="text-rose-500 font-bold text-lg">-{{ formatSimple(totalLiabilities) }}</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="pt-16 px-5">
+        <div class="flex justify-between items-end mb-4">
+            <h2 class="text-xl font-bold text-slate-800">我的账户</h2>
+            <button @click="openAddAccountModal" class="text-blue-600 text-sm font-semibold bg-blue-50 px-3 py-1 rounded-full">
+                <i class="fas fa-plus mr-1"></i>新建
+            </button>
+        </div>
+
+        <div class="space-y-3">
+            <div v-for="acc in accounts" :key="acc.id" class="relative group">
+                <div @click="prefillTransaction(acc)"
+                     class="bg-white p-4 pr-12 rounded-xl shadow-sm border-l-4 active:scale-[0.98] transition-all cursor-pointer relative overflow-hidden z-10 min-h-[80px] flex items-center justify-between"
+                     :class="acc.type === 'liability' ? 'border-rose-500' : (acc.currency === 'AUD' ? 'border-amber-400' : 'border-blue-500')">
+                    
+                    <div class="flex-1 min-w-0 mr-2">
+                        <h3 class="font-bold text-slate-700 truncate flex items-center gap-2">
+                            {{ acc.name }}
+                            <span class="text-[10px] px-1.5 py-0.5 rounded text-white flex-shrink-0" 
+                                  :class="acc.type === 'liability' ? 'bg-rose-500' : 'bg-slate-300'">
+                                {{ acc.type === 'liability' ? '负' : '资' }}
+                            </span>
+                        </h3>
+                        <div class="text-xs text-gray-400 mt-1">{{ acc.currency }} 账户</div>
+                    </div>
+
+                    <div class="text-right flex-shrink-0">
+                        <p class="text-lg font-bold font-mono" :class="acc.type === 'liability' ? 'text-rose-600' : 'text-slate-700'">
+                            {{ acc.type === 'liability' ? '-' : '' }}{{ acc.currency === 'AUD' ? '$' : '¥' }}{{ acc.balance.toLocaleString() }}
+                        </p>
+                    </div>
+                </div>
+
+                <button @click.stop="deleteAccount(acc.id)" class="absolute top-1/2 -translate-y-1/2 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full text-gray-300 hover:text-white hover:bg-rose-500 transition-colors">
+                    <i class="fas fa-trash-alt text-sm"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="mt-8">
+            <h2 class="text-lg font-bold text-slate-800 mb-2">最近变动</h2>
+            <div v-if="transactions.length === 0" class="text-center text-gray-400 text-sm py-4 border border-dashed rounded-xl">
+                暂无记录，点击底部按钮记一笔
+            </div>
+            <div v-for="(tx, index) in transactions.slice(0, 5)" :key="index" class="flex justify-between items-center py-3 border-b border-gray-100 text-sm">
+                <div>
+                    <span class="font-medium">{{ tx.category }}</span>
+                    <span class="text-xs text-gray-400 ml-2">{{ tx.date }}</span>
+                </div>
+                <span :class="tx.type === 'expense' ? 'text-rose-500' : (tx.type === 'income' ? 'text-emerald-500' : 'text-blue-500')">
+                    {{ tx.type === 'expense' ? '-' : '+' }}{{ tx.amount }} {{ tx.currency }}
+                </span>
+            </div>
+        </div>
+    </main>
+
+    <div class="fixed bottom-6 left-0 right-0 flex justify-center z-40 pointer-events-none">
+        <button @click="openTxModal" class="pointer-events-auto bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-xl flex items-center gap-2 hover:bg-slate-800 active:scale-95 transition-all">
+            <i class="fas fa-pen text-lg"></i>
+            <span class="font-bold">记账 / 调整</span>
+        </button>
+    </div>
+
+    <transition name="slide-up">
+    <div v-if="showAddAccModal" class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center backdrop-blur-sm" @click.self="showAddAccModal = false">
+        <div class="bg-white w-full max-w-md rounded-t-3xl p-6 h-[75vh] flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">新建账户</h2>
+                <button @click="showAddAccModal = false" class="text-gray-400"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="space-y-4 flex-1 overflow-y-auto">
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase">账户名称</label>
+                    <input v-model="newAccForm.name" placeholder="如: 花呗, 澳洲房贷" class="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase">币种</label>
+                    <div class="flex gap-3 mt-1">
+                        <button @click="newAccForm.currency = 'AUD'" class="flex-1 py-3 rounded-xl border-2 font-bold" :class="newAccForm.currency === 'AUD' ? 'border-amber-400 bg-amber-50' : 'border-gray-100'">AUD</button>
+                        <button @click="newAccForm.currency = 'CNY'" class="flex-1 py-3 rounded-xl border-2 font-bold" :class="newAccForm.currency === 'CNY' ? 'border-red-400 bg-red-50' : 'border-gray-100'">CNY</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase">类型</label>
+                    <div class="flex gap-3 mt-1">
+                        <button @click="newAccForm.type = 'asset'" class="flex-1 py-3 rounded-xl border-2 font-bold" :class="newAccForm.type === 'asset' ? 'border-emerald-500 bg-emerald-50' : 'border-gray-100'">资产</button>
+                        <button @click="newAccForm.type = 'liability'" class="flex-1 py-3 rounded-xl border-2 font-bold" :class="newAccForm.type === 'liability' ? 'border-rose-500 bg-rose-50' : 'border-gray-100'">负债</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase">当前余额 (正数)</label>
+                    <input type="number" v-model.number="newAccForm.balance" placeholder="0.00" class="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 font-bold">
+                    <p class="text-xs text-gray-400 mt-2">* 即使是负债，也请输入正数 (如 900000)，系统会自动识别为欠款。</p>
+                </div>
+            </div>
+            <button @click="createAccount" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg shadow-lg mt-4">创建</button>
+        </div>
+    </div>
+    </transition>
+
+    <transition name="slide-up">
+    <div v-if="showTxModal" class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center backdrop-blur-sm" @click.self="showTxModal = false">
+        <div class="bg-white w-full max-w-md rounded-t-3xl p-6 h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">记账 / 调整</h2>
+                <button @click="showTxModal = false" class="text-gray-400"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="flex bg-gray-100 p-1 rounded-xl mb-6">
+                <button @click="txForm.type = 'expense'" :class="{'bg-white shadow text-rose-500': txForm.type === 'expense'}" class="flex-1 py-2 rounded-lg text-sm font-bold">支出</button>
+                <button @click="txForm.type = 'income'" :class="{'bg-white shadow text-emerald-500': txForm.type === 'income'}" class="flex-1 py-2 rounded-lg text-sm font-bold">收入</button>
+                <button @click="txForm.type = 'adjust'" :class="{'bg-white shadow text-blue-500': txForm.type === 'adjust'}" class="flex-1 py-2 rounded-lg text-sm font-bold">余额修正</button>
+            </div>
+            <div class="mb-6 relative">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xl">{{ getCurrencySymbol(selectedAccount?.currency) }}</span>
+                <input type="number" v-model.number="txForm.amount" placeholder="0.00" class="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl py-4 pl-10 pr-4 text-3xl font-bold text-slate-800 outline-none focus:border-blue-500">
+            </div>
+            <div class="mb-4">
+                <label class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">账户</label>
+                <div class="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+                    <div v-for="acc in accounts" :key="acc.id" @click="txForm.accountId = acc.id"
+                         class="flex-shrink-0 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all min-w-[100px]"
+                         :class="txForm.accountId === acc.id ? 'border-slate-800 bg-slate-50' : 'border-gray-100 opacity-60'">
+                        <div class="text-xs font-bold mb-1" :class="acc.type === 'liability'?'text-rose-500':'text-emerald-600'">{{ acc.type==='liability'?'负债':'资产' }}</div>
+                        <div class="font-bold text-sm truncate w-24">{{ acc.name }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-6">
+                <label class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">类别/备注</label>
+                <input type="text" v-model="txForm.category" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500">
+                <div class="flex gap-2 mt-3 flex-wrap" v-if="txForm.type !== 'adjust'">
+                    <span v-for="tag in (txForm.type==='expense'?expenseTags:incomeTags)" @click="txForm.category = tag"
+                          class="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-600 cursor-pointer hover:bg-gray-200">{{ tag }}</span>
+                </div>
+            </div>
+            <button @click="submitTx" class="w-full bg-slate-900 text-white py-4 rounded-xl font-bold text-lg shadow-lg mt-auto">保存</button>
+        </div>
+    </div>
+    </transition>
+
+    <div v-if="showRateModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm" @click.self="showRateModal = false">
+        <div class="bg-white w-72 p-6 rounded-2xl shadow-2xl">
+            <h3 class="font-bold text-lg mb-4">设置汇率</h3>
+            <input type="number" v-model="exchangeRate" class="w-full border-b-2 border-blue-500 py-2 text-xl font-bold outline-none text-center">
+            <p class="text-xs text-center text-gray-400 mt-2">1 AUD = {{ exchangeRate }} CNY</p>
+            <button @click="showRateModal = false" class="w-full bg-blue-600 text-white py-2 rounded-lg font-bold mt-4">确定</button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    window.onerror = function(msg) { alert('程序错误: ' + msg); };
+
+    const { createApp, computed, ref, reactive, watch, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            const baseCurrency = ref('AUD');
+            const exchangeRate = ref(4.72);
+            const accounts = ref([]);
+            const transactions = ref([]);
+            
+            const showTxModal = ref(false);
+            const showAddAccModal = ref(false);
+            const showRateModal = ref(false);
+            
+            const txForm = reactive({ type: 'expense', amount: '', accountId: null, category: '' });
+            const newAccForm = reactive({ name: '', currency: 'AUD', type: 'asset', balance: '' });
+            
+            const expenseTags = ['超市', '房租', '餐饮', '还房贷', '交通', '购物'];
+            const incomeTags = ['工资', '股票分红', '理财收益', '兼职'];
+
+            onMounted(() => {
+                const savedAcc = localStorage.getItem('mw_pro_accounts');
+                if (savedAcc) {
+                    accounts.value = JSON.parse(savedAcc);
+                } else {
+                    accounts.value = [
+                        { id: 1, name: '日常澳洲卡', currency: 'AUD', balance: 0, type: 'asset' },
+                        { id: 2, name: '股票账户', currency: 'CNY', balance: 0, type: 'asset' },
+                        { id: 3, name: '国内房贷', currency: 'CNY', balance: 0, type: 'liability' }
+                    ];
+                }
+                const savedTx = localStorage.getItem('mw_pro_tx');
+                if(savedTx) transactions.value = JSON.parse(savedTx);
+                const savedRate = localStorage.getItem('mw_pro_rate');
+                if(savedRate) exchangeRate.value = parseFloat(savedRate);
+            });
+
+            // 自动保存
+            watch([accounts, transactions, exchangeRate], () => {
+                localStorage.setItem('mw_pro_accounts', JSON.stringify(accounts.value));
+                localStorage.setItem('mw_pro_tx', JSON.stringify(transactions.value));
+                localStorage.setItem('mw_pro_rate', exchangeRate.value.toString());
+            }, { deep: true });
+
+            // 🔥【Bug Fix】监听类型变化，自动清空 Category 🔥
+            watch(() => txForm.type, (newVal) => {
+                txForm.category = '';
+            });
+
+            const convert = (amount, from, to) => {
+                if(!amount) return 0;
+                if (from === to) return amount;
+                if (from === 'AUD' && to === 'CNY') return amount * exchangeRate.value;
+                if (from === 'CNY' && to === 'AUD') return amount / exchangeRate.value;
+                return amount;
+            };
+
+            const totalAssets = computed(() => {
+                return accounts.value
+                    .filter(a => a.type === 'asset')
+                    .reduce((sum, a) => sum + convert(a.balance, a.currency, baseCurrency.value), 0);
+            });
+
+            const totalLiabilities = computed(() => {
+                return accounts.value
+                    .filter(a => a.type === 'liability')
+                    .reduce((sum, a) => sum + convert(a.balance, a.currency, baseCurrency.value), 0);
+            });
+
+            const netWorth = computed(() => totalAssets.value - totalLiabilities.value);
+            const selectedAccount = computed(() => accounts.value.find(a => a.id === txForm.accountId));
+
+            const openAddAccountModal = () => {
+                newAccForm.name = ''; newAccForm.balance = '';
+                showAddAccModal.value = true;
+            };
+
+            const createAccount = () => {
+                if(!newAccForm.name) return alert('请输入账户名称');
+                if(newAccForm.balance === '') newAccForm.balance = 0;
+                accounts.value.push({
+                    id: Date.now(),
+                    name: newAccForm.name,
+                    currency: newAccForm.currency,
+                    type: newAccForm.type,
+                    balance: parseFloat(newAccForm.balance)
+                });
+                showAddAccModal.value = false;
+            };
+
+            const deleteAccount = (id) => {
+                if(confirm('确定删除该账户吗？')) accounts.value = accounts.value.filter(a => a.id !== id);
+            };
+
+            const openTxModal = () => {
+                if(!txForm.accountId && accounts.value.length > 0) txForm.accountId = accounts.value[0].id;
+                // 🔥 打开时也清空，防止残留 🔥
+                txForm.category = '';
+                txForm.amount = '';
+                showTxModal.value = true;
+            };
+
+            const prefillTransaction = (acc) => {
+                txForm.accountId = acc.id;
+                // 🔥 打开时也清空 🔥
+                txForm.category = '';
+                txForm.amount = '';
+                // 这里会触发 Watcher，再次清空一次，保证逻辑安全
+                txForm.type = (acc.name.includes('股') || acc.name.includes('基')) ? 'adjust' : 'expense';
+                showTxModal.value = true;
+            };
+
+            const submitTx = () => {
+                if(!txForm.amount && txForm.amount !== 0) return alert('请输入金额');
+                const acc = accounts.value.find(a => a.id === txForm.accountId);
+                if(!acc) return;
+
+                let realAmount = 0;
+                if (txForm.type === 'adjust') {
+                    realAmount = txForm.amount - acc.balance;
+                    acc.balance = txForm.amount;
+                    if(!txForm.category) txForm.category = '余额修正';
+                } else {
+                    if(txForm.type === 'expense') acc.balance -= txForm.amount;
+                    else acc.balance += txForm.amount;
+                    realAmount = txForm.amount;
+                }
+
+                transactions.value.unshift({
+                    type: txForm.type,
+                    amount: Math.abs(realAmount).toFixed(2),
+                    currency: acc.currency,
+                    category: txForm.category || '一般收支',
+                    date: new Date().toLocaleDateString()
+                });
+
+                // 关闭时清空
+                txForm.amount = ''; txForm.category = ''; 
+                showTxModal.value = false;
+            };
+
+            const formatNumber = (n) => n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const formatSimple = (n) => n > 1000000 ? (n/1000000).toFixed(2)+'m' : n.toLocaleString('en-US', {maximumFractionDigits: 0});
+            const getCurrencySymbol = (c) => c === 'CNY' ? '¥' : '$';
+            const toggleBaseCurrency = () => baseCurrency.value = baseCurrency.value === 'AUD' ? 'CNY' : 'AUD';
+
+            return {
+                baseCurrency, exchangeRate, netWorth, totalAssets, totalLiabilities,
+                accounts, transactions, 
+                showTxModal, showAddAccModal, showRateModal,
+                txForm, newAccForm, selectedAccount, expenseTags, incomeTags,
+                openAddAccountModal, createAccount, deleteAccount,
+                openTxModal, prefillTransaction, submitTx,
+                formatNumber, formatSimple, getCurrencySymbol, toggleBaseCurrency
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
